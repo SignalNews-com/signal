@@ -1,0 +1,2 @@
+"use client";
+export default function ErrorPage({ reset }: { error: Error & { digest?: string }; reset: () => void }) { return <main id="main" className="container error-page"><span className="eyebrow">SOMETHING WENT WRONG</span><h1>We couldn&apos;t load this page.</h1><p>Please try again. If this continues, the database or service configuration may need attention.</p><button className="button" onClick={reset}>Try again</button></main>; }

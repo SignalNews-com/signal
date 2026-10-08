@@ -1,0 +1,11 @@
+import { z } from "zod";
+export const objectId = z.string().regex(/^[a-f\d]{24}$/i, "Invalid identifier");
+export const slugify = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 120);
+const webUrl = z.union([z.literal(""), z.url().refine(value => ["https:", "http:"].includes(new URL(value).protocol), "Use an HTTP or HTTPS URL")]);
+export const loginSchema = z.object({ email: z.email().trim().toLowerCase(), password: z.string().min(1).max(128) });
+export const passwordSchema = z.string().min(12, "Use at least 12 characters").max(128);
+export const writerSchema = z.object({ name: z.string().trim().min(2).max(100), email: z.email().trim().toLowerCase(), password: passwordSchema, bio: z.string().max(1000).default("") });
+export const profileSchema = z.object({ name: z.string().trim().min(2).max(100), bio: z.string().max(1000), currentPassword: z.string().max(128).optional(), password: z.union([z.literal(""), passwordSchema]).optional() });
+export const articleSchema = z.object({ title: z.string().trim().min(3).max(200), slug: z.string().trim().max(120).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens").optional().or(z.literal("")), excerpt: z.string().max(400).default(""), content: z.string().max(200000).default(""), category: objectId.nullable().default(null), tags: z.array(objectId).max(15).default([]), seoTitle: z.string().max(70).default(""), seoDescription: z.string().max(170).default(""), canonicalUrl: webUrl.default(""), sourceName: z.string().max(120).default(""), sourceUrl: webUrl.default(""), socialImage: z.union([z.literal(""), z.url().refine(v => new URL(v).hostname === "res.cloudinary.com" && new URL(v).protocol === "https:")]).default(""), coverAlt: z.string().max(250).default(""), revision: z.number().int().min(0).optional() });
+export const taxonomySchema = z.object({ name: z.string().trim().min(2).max(60), slug: z.string().trim().max(80).optional(), description: z.string().max(500).default(""), isActive: z.boolean().default(true) });
+export const workflowSchema = z.object({ action: z.enum(["submit", "approve", "reject", "publish", "unpublish", "feature", "unfeature", "delete", "restore"]), reason: z.string().trim().max(2000).default(""), revision: z.number().int().min(0) });

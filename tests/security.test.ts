@@ -1,0 +1,16 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { assertOwner, nextStatus, requireAdmin, assertEditable, publicFilter, type Actor } from "../src/lib/permissions";
+import { sanitizeContent, safeJsonLd } from "../src/lib/content";
+import { articleSchema, writerSchema } from "../src/lib/validation";
+const writer: Actor = { id: "aaaaaaaaaaaaaaaaaaaaaaaa", role: "WRITER", name: "A", email: "a@example.test" };
+test("writer cannot access another writer's article", () => assert.throws(() => assertOwner(writer, "bbbbbbbbbbbbbbbbbbbbbbbb"), /access/));
+test("writer cannot access admin operations", () => assert.throws(() => requireAdmin(writer), /Administrator/));
+test("writer cannot approve or publish", () => { for (const action of ["approve", "publish", "reject", "unpublish"] as const) assert.throws(() => nextStatus("WRITER", "SUBMITTED", action), /Administrator/); });
+test("valid review, rejection, resubmission and publishing transitions", () => { assert.equal(nextStatus("WRITER", "DRAFT", "submit"), "SUBMITTED"); assert.equal(nextStatus("ADMIN", "SUBMITTED", "reject"), "REJECTED"); assert.equal(nextStatus("WRITER", "REJECTED", "submit"), "SUBMITTED"); assert.equal(nextStatus("ADMIN", "SUBMITTED", "approve"), "APPROVED"); assert.equal(nextStatus("ADMIN", "APPROVED", "publish"), "PUBLISHED"); assert.equal(nextStatus("ADMIN", "PUBLISHED", "unpublish"), "DRAFT"); });
+test("invalid transitions are denied", () => assert.throws(() => nextStatus("ADMIN", "DRAFT", "publish"), /Cannot/));
+test("submitted or published content is locked for writers", () => assert.throws(() => assertEditable(writer, { author: writer.id, status: "PUBLISHED" }), /Only drafts/));
+test("public visibility is published and not deleted", () => assert.deepEqual(publicFilter, { status: "PUBLISHED", deletedAt: null }));
+test("mass-assigned roles, authors and statuses are stripped", () => { const parsed = articleSchema.parse({ title: "Title", role: "ADMIN", author: "x", status: "PUBLISHED" }); assert.ok(!("role" in parsed)); assert.ok(!("author" in parsed)); assert.ok(!("status" in parsed)); const person = writerSchema.parse({ name: "Writer", email: "writer@example.test", password: "placeholder-password", role: "ADMIN" }); assert.ok(!("role" in person)); });
+test("stored content removes scripts, event handlers, unsafe links and foreign images", () => { const safe = sanitizeContent('<script>alert(1)</script><p onclick="alert(1)">Hello</p><a href="javascript:alert(1)">bad</a><img src="https://evil.test/pixel" onerror="alert(1)"><iframe src="https://evil.test"></iframe>'); assert.ok(!/script|onclick|onerror|iframe|evil\.test/.test(safe)); assert.match(safe, /Hello/); });
+test("JSON-LD cannot break out of a script element", () => assert.ok(!safeJsonLd({ title: "</script><script>alert(1)</script>" }).includes("<")));
