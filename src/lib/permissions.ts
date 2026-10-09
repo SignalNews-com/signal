@@ -22,7 +22,8 @@ export function nextStatus(role: Role, status: Status, action: WorkflowAction): 
   if (action === "submit" && (status === "DRAFT" || status === "REJECTED")) return "SUBMITTED";
   if (action === "approve" && status === "SUBMITTED") return "APPROVED";
   if (action === "reject" && (status === "SUBMITTED" || status === "APPROVED")) return "REJECTED";
-  if (action === "publish" && status === "APPROVED") return "PUBLISHED";
+  // Editors may publish in one step; publishing a draft or submission also records the approval.
+  if (action === "publish" && (status === "APPROVED" || status === "SUBMITTED" || status === "DRAFT")) return "PUBLISHED";
   if (action === "unpublish" && status === "PUBLISHED") return "DRAFT";
   throw new AppError(409, `Cannot ${action} an article with status ${status}`);
 }

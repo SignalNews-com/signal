@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { setTimeout as pause } from "node:timers/promises";
 import mongoose from "mongoose";
@@ -31,6 +31,8 @@ async function main() {
   process.env.ANALYTICS_GEO_PROVIDER = "vercel"; process.env.VERCEL = "1"; // Simulated trusted edge, isolated test process only.
   process.env.MONGODB_URI = replica.getUri("signal_test"); process.env.AUTH_SECRET = randomBytes(32).toString("hex"); process.env.NEXT_PUBLIC_SITE_URL = origin;
   await connectDb(); for (const model of Object.values(models)) await model.createIndexes(); const people = await seedDevelopmentData();
+  // Public pages are cached (ISR + data cache); drop entries left by earlier runs against a different database.
+  for (const dir of [".next/cache/fetch-cache", ".next/server/route-cache"]) await rm(dir, { recursive: true, force: true });
   server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-p", String(port)], { cwd: process.cwd(), env: { ...process.env, NODE_ENV: "production" }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   server.stdout?.on("data", chunk => { const text = String(chunk); if (text.includes("Ready")) console.log("Production server ready"); });
   server.stderr?.on("data", chunk => process.stderr.write(String(chunk)));
@@ -98,11 +100,12 @@ async function main() {
       await readerPage.getByRole("button", { name: "Allow article analytics" }).click();
       await readerPage.getByText("Article analytics allowed.", { exact: false }).waitFor();
       const accepted = readerPage.waitForResponse(r => r.url().includes("/api/views/") && r.request().method() === "POST");
+      // The tracker uses a keepalive fetch; Chromium crashes the page when Playwright reads such a body, so verify in the database.
+      const foreign = await models.Article.findOne({ slug: "geo-foreign-fixture" }); const before = foreign!.views;
       await readerPage.goto(`${origin}/article/geo-foreign-fixture`);
-      assert.equal((await (await accepted).json()).counted, true);
+      assert.equal((await accepted).status(), 200); assert.equal((await models.Article.findById(foreign!._id))?.views, before + 1);
       const repeated = readerPage.waitForResponse(r => r.url().includes("/api/views/") && r.request().method() === "POST");
-      await readerPage.reload(); assert.equal((await (await repeated).json()).counted, false);
-      const foreign = await models.Article.findOne({ slug: "geo-foreign-fixture" });
+      await readerPage.reload(); assert.equal((await repeated).status(), 200); assert.equal((await models.Article.findById(foreign!._id))?.views, before + 1);
       assert.equal((await models.DailyArticleCountryMetric.findOne({ article: foreign!._id, countryCode: "LK" }))?.pageViews, 1);
     } finally { await readerContext.close(); }
     assert.deepEqual(errors, []); console.log("PASS: browser login, admin pages, keyboard map selection, country drill-down, consent-to-collection flow, refresh deduplication, responsive screenshots and no browser exceptions");

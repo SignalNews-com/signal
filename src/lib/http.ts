@@ -9,6 +9,14 @@ export async function jsonBody(request: Request) {
   while (true) { const { done, value } = await reader.read(); if (done) break; size += value.length; if (size > 300000) { await reader.cancel(); throw new AppError(413, "Request is too large"); } chunks.push(value); }
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown; } catch { throw new AppError(400, "Invalid JSON"); }
 }
+// Streams a binary body while enforcing the size limit, so oversized uploads are cut off early.
+export async function readBody(request: Request, maxBytes: number, tooLarge = "File is too large") {
+  const reader = request.body?.getReader();
+  assert(reader, 400, "Choose a file to upload");
+  const chunks: Uint8Array[] = []; let size = 0;
+  while (true) { const { done, value } = await reader.read(); if (done) break; size += value.length; if (size > maxBytes) { await reader.cancel(); throw new AppError(413, tooLarge); } chunks.push(value); }
+  return Buffer.concat(chunks);
+}
 export function apiError(error: unknown) {
   if (error instanceof ZodError) return NextResponse.json({ error: "Please check the highlighted fields", fields: error.flatten().fieldErrors }, { status: 400 });
   if (error instanceof AppError) return NextResponse.json({ error: error.message }, { status: error.status });

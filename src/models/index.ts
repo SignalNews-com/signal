@@ -5,7 +5,7 @@ const ref = (model: string) => ({ type: Schema.Types.ObjectId, ref: model, requi
 const userSchema = new Schema({
   name: { type: String, required: true }, email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   passwordHash: { type: String, required: true, select: false }, role: { type: String, enum: roles, required: true, default: "WRITER" },
-  avatar: { type: String, default: "" }, bio: { type: String, default: "" }, isActive: { type: Boolean, default: true }, lastLoginAt: Date,
+  avatar: { type: String, default: "" }, avatarPublicId: { type: String, default: "" }, bio: { type: String, default: "" }, isActive: { type: Boolean, default: true }, lastLoginAt: Date,
 }, { timestamps: true });
 userSchema.index({ role: 1, isActive: 1, createdAt: -1 });
 export const User = mongoose.models.User as mongoose.Model<InferSchemaType<typeof userSchema>> || mongoose.model("User", userSchema);
@@ -51,6 +51,6 @@ countryMetricSchema.index({ countryCode: 1, day: 1, article: 1 });
 export const DailyArticleCountryMetric = mongoose.models.DailyArticleCountryMetric as mongoose.Model<InferSchemaType<typeof countryMetricSchema>> || mongoose.model("DailyArticleCountryMetric", countryMetricSchema);
 const receiptSchema = new Schema({ _id: String, expiresAt: Date }); receiptSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 export const ViewReceipt = mongoose.models.ViewReceipt as mongoose.Model<InferSchemaType<typeof receiptSchema>> || mongoose.model("ViewReceipt", receiptSchema);
-const assetSchema = new Schema({ publicId: { type: String, unique: true, required: true }, owner: ref("User"), article: { type: Schema.Types.ObjectId, ref: "Article", required: true }, state: { type: String, enum: ["ACTIVE", "DELETE_PENDING"], default: "ACTIVE" } }, { timestamps: true });
-assetSchema.index({ state: 1, updatedAt: 1 });
+const assetSchema = new Schema({ publicId: { type: String, unique: true, required: true }, owner: ref("User"), article: { type: Schema.Types.ObjectId, ref: "Article", default: null }, kind: { type: String, enum: ["COVER", "CONTENT", "AVATAR"], default: "COVER" }, width: Number, height: Number, state: { type: String, enum: ["ACTIVE", "DELETE_PENDING"], default: "ACTIVE" } }, { timestamps: true });
+assetSchema.index({ state: 1, updatedAt: 1 }); assetSchema.index({ owner: 1, kind: 1, createdAt: -1 });
 export const Asset = mongoose.models.Asset as mongoose.Model<InferSchemaType<typeof assetSchema>> || mongoose.model("Asset", assetSchema);

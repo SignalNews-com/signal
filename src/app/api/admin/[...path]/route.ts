@@ -4,17 +4,18 @@ import { createWriter, deleteTaxonomy, saveTaxonomy, setWriterActive } from "@/l
 import { apiError, json, jsonBody } from "@/lib/http";
 import { sameOrigin } from "@/lib/security";
 import { AppError } from "@/lib/errors";
+import { publicTags, refreshPublic } from "@/lib/revalidate";
 type Context = { params: Promise<{ path: string[] }> };
 async function handle(request: Request, context: Context) {
   try {
     const actor = await requireActor("ADMIN"); sameOrigin(request); const [kind, id] = (await context.params).path;
     if (kind === "writers") {
       if (request.method === "POST" && !id) return json({ id: await createWriter(actor, await jsonBody(request)) }, 201);
-      if (request.method === "PATCH" && id) { const data = z.object({ isActive: z.boolean() }).parse(await jsonBody(request)); await setWriterActive(actor, id, data.isActive); return json({ ok: true }); }
+      if (request.method === "PATCH" && id) { const data = z.object({ isActive: z.boolean() }).parse(await jsonBody(request)); await setWriterActive(actor, id, data.isActive); refreshPublic(publicTags.people); return json({ ok: true }); }
     }
     if (kind === "categories" || kind === "tags") {
-      if (request.method === "DELETE" && id) { await deleteTaxonomy(actor, kind, id); return json({ ok: true }); }
-      if ((request.method === "POST" && !id) || (request.method === "PATCH" && id)) return json({ id: await saveTaxonomy(actor, kind, await jsonBody(request), id) });
+      if (request.method === "DELETE" && id) { await deleteTaxonomy(actor, kind, id); refreshPublic(); return json({ ok: true }); }
+      if ((request.method === "POST" && !id) || (request.method === "PATCH" && id)) { const saved = await saveTaxonomy(actor, kind, await jsonBody(request), id); refreshPublic(); return json({ id: saved }); }
     }
     throw new AppError(404, "Endpoint not found");
   } catch (error) { return apiError(error); }

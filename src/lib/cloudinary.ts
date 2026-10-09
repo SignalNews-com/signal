@@ -2,7 +2,7 @@ import { v2 as cloudinary, type UploadApiResponse } from "cloudinary";
 import mongoose from "mongoose";
 import { randomUUID } from "node:crypto";
 import { requiredEnv } from "./env";
-import { Article, Asset } from "@/models";
+import { Article, Asset, User } from "@/models";
 import { assertEditable, type Actor } from "./permissions";
 import { assert } from "./errors";
 import { audit } from "./articles";
@@ -26,41 +26,78 @@ export async function cleanAsset(publicId: string) {
     else console.error("Asset cleanup pending", { publicId });
   } catch { console.error("Asset cleanup pending", { publicId }); }
 }
-export async function replaceCover(actor: Actor, id: string, bytes: Buffer, mime: string, alt: string, revision: number) {
-  objectId.parse(id); assert(bytes.length > 0 && bytes.length <= 5 * 1024 * 1024, 400, "Choose an image smaller than 5 MB");
+export const maxImageBytes = 5 * 1024 * 1024;
+function validateImage(bytes: Buffer, mime: string) {
+  assert(bytes.length > 0 && bytes.length <= maxImageBytes, 400, "Choose an image smaller than 5 MB");
   assert(imageType(bytes) === mime, 400, "Choose a valid JPEG, PNG, WebP, or AVIF image");
+}
+type Incoming = { width: number; height: number; crop: string; gravity?: string };
+function uploadBytes(publicId: string, bytes: Buffer, transformation: Incoming = { width: 2400, height: 2400, crop: "limit" }) {
+  return new Promise<UploadApiResponse>((resolve, reject) => {
+    const stream = client().uploader.upload_stream({ public_id: publicId, resource_type: "image", allowed_formats: ["jpg", "jpeg", "png", "webp", "avif"], overwrite: false, transformation: [transformation] }, (error, result) => { if (error || !result) reject(error || new Error("Upload failed")); else resolve(result); });
+    stream.end(bytes);
+  });
+}
+// Uploads under a pre-registered DELETE_PENDING asset so an interrupted request never leaks a Cloudinary file.
+async function registeredUpload(actor: Actor, publicId: string, bytes: Buffer, asset: { kind: "COVER" | "CONTENT" | "AVATAR"; article?: string }, transformation?: Incoming) {
+  await Asset.create({ publicId, owner: actor.id, article: asset.article || null, kind: asset.kind, state: "DELETE_PENDING" });
+  try { return await uploadBytes(publicId, bytes, transformation); } catch (error) { await cleanAsset(publicId); throw error; }
+}
+export async function uploadContentImage(actor: Actor, bytes: Buffer, mime: string, articleId?: string) {
+  validateImage(bytes, mime); await connectDb();
+  if (articleId) { objectId.parse(articleId); const article = await Article.findById(articleId).select("author status deletedAt").lean(); assert(article, 404, "Article not found"); assertEditable(actor, article); }
+  const publicId = `signal/${articleId || `library/${actor.id}`}/${randomUUID()}`;
+  const uploaded = await registeredUpload(actor, publicId, bytes, { kind: "CONTENT", article: articleId }, { width: 2000, height: 2000, crop: "limit" });
+  // Inline images stay referenced by article HTML, so they remain ACTIVE rather than being reclaimed.
+  await Asset.updateOne({ publicId }, { state: "ACTIVE", width: uploaded.width, height: uploaded.height });
+  return { url: uploaded.secure_url, width: uploaded.width, height: uploaded.height };
+}
+export async function replaceAvatar(actor: Actor, bytes: Buffer, mime: string) {
+  validateImage(bytes, mime); await connectDb();
+  const publicId = `signal/avatars/${actor.id}/${randomUUID()}`;
+  const uploaded = await registeredUpload(actor, publicId, bytes, { kind: "AVATAR" }, { width: 400, height: 400, crop: "fill", gravity: "face" });
+  let previous: string | undefined;
+  try {
+    await mongoose.connection.transaction(async session => {
+      const user = await User.findById(actor.id).session(session); assert(user, 404, "Account not found");
+      previous = user.avatarPublicId || undefined; user.avatar = uploaded.secure_url; user.avatarPublicId = publicId; await user.save({ session });
+      await Asset.updateOne({ publicId }, { state: "ACTIVE" }, { session });
+      if (previous) await Asset.updateOne({ publicId: previous }, { state: "DELETE_PENDING" }, { session });
+      await audit(actor, "PROFILE_UPDATED", undefined, "Profile photo replaced", session);
+    });
+  } catch (error) { await cleanAsset(publicId); throw error; }
+  if (previous) await cleanAsset(previous);
+  return uploaded.secure_url;
+}
+export async function replaceCover(actor: Actor, id: string, bytes: Buffer, mime: string, alt: string, revision: number) {
+  objectId.parse(id); validateImage(bytes, mime);
   assert(alt.trim().length > 0 && alt.length <= 250, 400, "Add image alt text (up to 250 characters)");
   await connectDb(); const existing = await Article.findById(id); assert(existing, 404, "Article not found"); assertEditable(actor, existing); assert(existing.revision === revision, 409, "Article changed. Reload before uploading.");
   const publicId = `signal/${id}/${randomUUID()}`;
-  // Register cleanup before uploading so a process interruption cannot lose the asset reference.
-  await Asset.create({ publicId, owner: actor.id, article: id, state: "DELETE_PENDING" });
-  let uploaded: UploadApiResponse;
+  const uploaded = await registeredUpload(actor, publicId, bytes, { kind: "COVER", article: id });
   try {
-    uploaded = await new Promise<UploadApiResponse>((resolve, reject) => {
-      const stream = client().uploader.upload_stream({ public_id: publicId, resource_type: "image", allowed_formats: ["jpg", "jpeg", "png", "webp", "avif"], overwrite: false, transformation: [{ width: 2400, height: 2400, crop: "limit" }] }, (error, result) => { if (error || !result) reject(error || new Error("Upload failed")); else resolve(result); });
-      stream.end(bytes);
-    });
-    let previous: string | undefined;
+    let previous: string | undefined; let next = revision; let published = false;
     await mongoose.connection.transaction(async session => {
       const article = await Article.findById(id).session(session); assert(article, 404, "Article not found"); assertEditable(actor, article); assert(article.revision === revision, 409, "Article changed. Reload before uploading.");
       previous = article.coverImage?.publicId || undefined;
       article.coverImage = { url: uploaded.secure_url, secureUrl: uploaded.secure_url, publicId, width: uploaded.width, height: uploaded.height, alt: alt.trim() };
-      article.revision += 1; await article.save({ session });
-      await Asset.updateOne({ publicId }, { state: "ACTIVE" }, { session });
+      article.revision += 1; await article.save({ session }); next = article.revision; published = article.status === "PUBLISHED" && !article.deletedAt;
+      await Asset.updateOne({ publicId }, { state: "ACTIVE", width: uploaded.width, height: uploaded.height }, { session });
       if (previous) await Asset.updateOne({ publicId: previous }, { state: "DELETE_PENDING" }, { session });
       await audit(actor, "ARTICLE_UPDATED", article._id, "Cover image replaced", session);
     });
     if (previous) await cleanAsset(previous);
-    return uploaded.secure_url;
+    return { url: uploaded.secure_url, revision: next, publicChange: published };
   } catch (error) { await cleanAsset(publicId); throw error; }
 }
 export async function removeCover(actor: Actor, id: string, revision: number) {
-  objectId.parse(id); await connectDb(); let old: string | undefined;
+  objectId.parse(id); await connectDb(); let old: string | undefined; let next = revision; let published = false;
   await mongoose.connection.transaction(async session => {
     const article = await Article.findById(id).session(session); assert(article, 404, "Article not found"); assertEditable(actor, article); assert(article.revision === revision, 409, "Article changed. Reload before deleting the cover.");
-    old = article.coverImage?.publicId || undefined; article.coverImage = undefined; article.revision += 1; await article.save({ session });
+    old = article.coverImage?.publicId || undefined; article.coverImage = undefined; article.revision += 1; await article.save({ session }); next = article.revision; published = article.status === "PUBLISHED" && !article.deletedAt;
     if (old) await Asset.updateOne({ publicId: old }, { state: "DELETE_PENDING" }, { session });
     await audit(actor, "ARTICLE_UPDATED", article._id, "Cover image removed", session);
   });
   if (old) await cleanAsset(old);
+  return { revision: next, publicChange: published };
 }
