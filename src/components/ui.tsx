@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import type { SearchParams } from "@/types";
 const scalar = (value: string | string[] | undefined) => typeof value === "string" ? value : "";
@@ -11,3 +12,5 @@ export function Pagination({ page, pages, params = {} }: { page: number; pages: 
   return <nav className="pagination" aria-label="Pagination">{page > 1 ? <Link className="button secondary" href={href(page - 1)}>Previous</Link> : <span /> }<span>Page {page} of {pages}</span>{page < pages ? <Link className="button secondary" href={href(page + 1)}>Next</Link> : <span />}</nav>;
 }
 export function Stat({ label, value, detail }: { label: string; value: number | string; detail?: string }) { return <div className="stat"><span>{label}</span><strong>{typeof value === "number" ? formatNumber(value) : value}</strong>{detail ? <small>{detail}</small> : null}</div>; }
+export function Avatar({ person, large = false }: { person?: { name?: string; avatar?: string } | null; large?: boolean }) { const size = large ? 62 : 37; return person?.avatar ? <Image className={`avatar${large ? " large" : ""}`} src={person.avatar} alt="" width={size} height={size} sizes={`${size * 2}px`} /> : <span className={`avatar${large ? " large" : ""}`} aria-hidden="true">{person?.name?.slice(0, 1) || "S"}</span>; }
+export const viewsLabel = (n: number) => `${formatNumber(n)} ${n === 1 ? "view" : "views"}`;

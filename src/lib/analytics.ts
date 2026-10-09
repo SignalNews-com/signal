@@ -6,6 +6,19 @@ import { objectId } from "./validation";
 import { scalar } from "./queries";
 import type { SearchParams } from "@/types";
 export type SeriesPoint = { _id: string; count: number };
+// Days without views are absent from DailyView; charts need them as explicit zeros.
+export function fillDays(points: SeriesPoint[], from: string, to: string) {
+  const counts = new Map(points.map(p => [p._id, p.count])); const out: SeriesPoint[] = [];
+  for (let t = Date.parse(`${from}T00:00:00Z`), end = Date.parse(`${to}T00:00:00Z`); t <= end && out.length < 1000; t += 86400000) { const day = new Date(t).toISOString().slice(0, 10); out.push({ _id: day, count: counts.get(day) || 0 }); }
+  return out;
+}
+export const requestTime = () => Date.now();
+export const rangePresets = () => { const to = new Date().toISOString().slice(0, 10); return [7, 30, 90].map(days => ({ label: `${days} days`, from: new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10), to })); };
+export async function articleViews(articleId: string, days = 30) {
+  await connectDb(); const to = new Date().toISOString().slice(0, 10); const from = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
+  const rows = await DailyView.find({ article: new mongoose.Types.ObjectId(objectId.parse(articleId)), day: { $gte: from, $lte: to } }).select("day views").lean();
+  return fillDays(rows.map(r => ({ _id: r.day, count: r.views })), from, to);
+}
 export async function analytics(actor: Actor, params: SearchParams, author?: string) {
   await connectDb(); const today = new Date().toISOString().slice(0, 10);
   const validDay = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && Number.isFinite(Date.parse(s));
@@ -21,7 +34,8 @@ export async function analytics(actor: Actor, params: SearchParams, author?: str
     actor.role === "ADMIN" ? Article.aggregate<{ _id: string; name: string; count: number; published: number; views: number }>([{ $match: match }, { $group: { _id: "$author", count: { $sum: 1 }, published: { $sum: { $cond: [{ $eq: ["$status", "PUBLISHED"] }, 1, 0] } }, views: { $sum: "$views" } } }, { $sort: { views: -1 } }, { $limit: 10 }, { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "writer" } }, { $project: { name: { $first: "$writer.name" }, count: 1, published: 1, views: 1 } }]) : Promise.resolve([]),
     DailyView.aggregate<{ _id: string; title: string; count: number }>([{ $match: { day: { $gte: from, $lte: to } } }, { $lookup: { from: "articles", localField: "article", foreignField: "_id", as: "story" } }, { $unwind: "$story" }, { $match: { "story.deletedAt": null, ...(owner ? { "story.author": new mongoose.Types.ObjectId(owner) } : {}) } }, { $group: { _id: "$article", title: { $first: "$story.title" }, count: { $sum: "$views" } } }, { $sort: { count: -1 } }, { $limit: 10 }]),
   ]);
-  return { from, to, views, publishing, categories, statuses, leaderboard, topArticles, totalViews: views.reduce((sum, d) => sum + d.count, 0) };
+  const series = fillDays(views, from, to);
+  return { from, to, views: series, publishing, categories, statuses, leaderboard, topArticles, totalViews: views.reduce((sum, d) => sum + d.count, 0) };
 }
 export async function listWriters(params: SearchParams) {
   await connectDb(); const page = Math.max(1, Number.parseInt(scalar(params.page)) || 1);

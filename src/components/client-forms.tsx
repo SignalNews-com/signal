@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-export type ApiResult = { error?: string; fields?: Record<string, string[]>; id?: string; redirect?: string; signInAgain?: boolean };
+export type ApiResult = { error?: string; fields?: Record<string, string[]>; id?: string; revision?: number; status?: string; redirect?: string; signInAgain?: boolean };
 export async function apiRequest(url: string, method = "POST", data?: unknown): Promise<ApiResult> {
   const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: data === undefined ? undefined : JSON.stringify(data) });
   const result: ApiResult = await response.json();

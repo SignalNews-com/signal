@@ -32,7 +32,7 @@ export async function saveArticle(actor: Actor, input: unknown, id?: string) {
     article.revision += 1;
     await article.save({ session });
     await audit(actor, id ? "ARTICLE_UPDATED" : "ARTICLE_CREATED", article._id, "", session);
-    return article._id.toString();
+    return { id: article._id.toString(), revision: article.revision, status: article.status, publicChange: article.status === "PUBLISHED" && !article.deletedAt };
   });
 }
 export function validatePublishable(article: { title: string; excerpt: string; content: string; category?: unknown; coverImage?: { alt?: string | null } | null }) {
@@ -44,7 +44,7 @@ export async function transitionArticle(actor: Actor, id: string, input: unknown
   return mongoose.connection.transaction(async session => {
     const article = await Article.findById(id).session(session); assert(article, 404, "Article not found"); assertOwner(actor, article.author);
     assert(article.revision === data.revision, 409, "This article changed. Reload before continuing.");
-    const now = new Date(); let action = "";
+    const now = new Date(); let action = ""; const wasPublic = article.status === "PUBLISHED" && !article.deletedAt;
     if (data.action === "feature" || data.action === "unfeature" || data.action === "delete" || data.action === "restore") {
       requireAdmin(actor);
       if (data.action === "restore") { assert(article.deletedAt, 409, "Article is not deleted"); article.deletedAt = null; article.status = "DRAFT"; action = "ARTICLE_RESTORED"; }
@@ -64,11 +64,11 @@ export async function transitionArticle(actor: Actor, id: string, input: unknown
         case "submit": article.submittedAt = now; article.rejectionReason = ""; article.approvedAt = undefined; action = oldStatus === "REJECTED" ? "ARTICLE_RESUBMITTED" : "ARTICLE_SUBMITTED"; break;
         case "approve": article.approvedAt = now; article.reviewedBy = new mongoose.Types.ObjectId(actor.id); action = "ARTICLE_APPROVED"; break;
         case "reject": assert(data.reason.length >= 10, 400, "Provide a rejection reason of at least 10 characters"); article.rejectedAt = now; article.rejectionReason = data.reason; article.reviewedBy = new mongoose.Types.ObjectId(actor.id); action = "ARTICLE_REJECTED"; break;
-        case "publish": article.publishedAt ||= now; action = "ARTICLE_PUBLISHED"; break;
+        case "publish": article.publishedAt ||= now; if (oldStatus !== "APPROVED") { article.approvedAt = now; article.reviewedBy = new mongoose.Types.ObjectId(actor.id); article.rejectionReason = ""; } action = oldStatus === "APPROVED" ? "ARTICLE_PUBLISHED" : "ARTICLE_APPROVED_AND_PUBLISHED"; break;
         case "unpublish": article.featured = false; article.approvedAt = undefined; action = "ARTICLE_UNPUBLISHED"; break;
       }
     }
     article.revision += 1; await article.save({ session }); await audit(actor, action, article._id, data.reason, session);
-    return { status: article.status, revision: article.revision };
+    return { status: article.status, revision: article.revision, slug: article.slug, publicChange: wasPublic || (article.status === "PUBLISHED" && !article.deletedAt) };
   });
 }

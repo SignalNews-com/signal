@@ -13,6 +13,8 @@
     "seed": "tsx scripts/seed.ts",
     "db:indexes": "tsx scripts/indexes.ts",
     "admin:create": "tsx scripts/create-admin.ts",
+    "categories:sync": "tsx scripts/sync-categories.ts",
+    "assets:cleanup": "tsx scripts/cleanup-assets.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

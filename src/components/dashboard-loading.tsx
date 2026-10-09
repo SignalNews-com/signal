@@ -1,0 +1,1 @@
+export function DashboardLoading() { return <div className="dashboard-loading" aria-busy="true" aria-label="Loading"><div className="skeleton skeleton-title" /><div className="stats-grid">{[1, 2, 3, 4].map(i => <div key={i} className="skeleton skeleton-stat" />)}</div><div className="skeleton skeleton-wide" /></div>; }

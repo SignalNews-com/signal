@@ -2,7 +2,9 @@ import type { NextConfig } from "next";
 const config: NextConfig = {
   poweredByHeader: false,
   serverExternalPackages: ["mongoose", "@node-rs/argon2"],
-  images: { remotePatterns: [{ protocol: "https", hostname: "res.cloudinary.com" }] },
+  images: { loader: "custom", loaderFile: "./src/lib/image-loader.ts", remotePatterns: [{ protocol: "https", hostname: "res.cloudinary.com" }], deviceSizes: [640, 828, 1080, 1280, 1600, 2000], imageSizes: [96, 160, 256, 384] },
+  compress: true,
+  experimental: { optimizePackageImports: ["lucide-react"] },
   async headers() {
     return [{ source: "/:path*", headers: [
       { key: "X-Content-Type-Options", value: "nosniff" },

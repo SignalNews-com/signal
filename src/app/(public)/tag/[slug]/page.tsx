@@ -1,9 +1,13 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { Tag } from "@/models";
-import { connectDb } from "@/lib/db";
-import { databaseConfigured } from "@/lib/env";
+import { tagBySlug } from "@/lib/public-data";
+import { listingSeo, ogImage } from "@/lib/seo";
 import { PublicListing } from "@/components/public-listing";
 import type { SearchParams } from "@/types";
-export const dynamic = "force-dynamic";
-export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) { const { slug } = await params; return { title: `Stories tagged ${slug}`, alternates: { canonical: `/tag/${slug}` } }; }
-export default async function TagPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<SearchParams> }) { if (!databaseConfigured()) notFound(); await connectDb(); const tag = await Tag.findOne({ slug: (await params).slug, isActive: true }).lean(); if (!tag) notFound(); return <div className="container"><PublicListing title={tag.name} description={tag.description} params={await searchParams} filter={{ tags: tag._id }} /></div>; }
+type Props = { params: Promise<{ slug: string }>; searchParams: Promise<SearchParams> };
+export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
+  const { slug } = await params; const tag = await tagBySlug(slug); if (!tag) return { title: "Topic not found", robots: { index: false } };
+  const seo = listingSeo(`/tag/${slug}`, await searchParams); const title = `${tag.name}: latest news and analysis${seo.page > 1 ? ` — page ${seo.page}` : ""}`; const description = tag.description || `Every SIGNAL story about ${tag.name}.`;
+  return { title, description, alternates: { canonical: seo.canonical }, robots: seo.robots, openGraph: { title, description, url: seo.canonical, images: [{ url: ogImage(tag.name, "SIGNAL topic"), width: 1200, height: 630 }] } };
+}
+export default async function TagPage({ params, searchParams }: Props) { const { slug } = await params; const tag = await tagBySlug(slug); if (!tag) notFound(); return <div className="container"><PublicListing title={tag.name} description={tag.description || `Every SIGNAL story about ${tag.name}.`} params={await searchParams} scope={{ tag: tag._id }} path={`/tag/${slug}`} eyebrow="TOPIC" /></div>; }
